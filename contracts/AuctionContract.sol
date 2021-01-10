@@ -4,8 +4,8 @@ pragma solidity >=0.4.21 <0.9.0;
 contract AuctionContract {
     struct AuctionItem {
         uint highestBid;
-        address highestBidderAddress;
-        address lister;
+        address payable highestBidderAddress;
+        address payable lister;
         string itemName;
         uint auctionEnd;
     }
@@ -30,6 +30,8 @@ contract AuctionContract {
       require(_itemId < itemCount);
       require(auctionItems[_itemId].auctionEnd > block.timestamp);
       require(auctionItems[_itemId].highestBid < msg.value);
+
+      auctionItems[_itemId].highestBidderAddress.transfer(auctionItems[_itemId].highestBid);
 
       auctionItems[_itemId].highestBid = msg.value;
       auctionItems[_itemId].highestBidderAddress = msg.sender;
