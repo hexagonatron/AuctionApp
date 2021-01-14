@@ -15,6 +15,10 @@ contract AuctionContract {
     uint public itemCount;
     mapping(uint => AuctionItem) public auctionItems;
 
+    event newItemListed(address indexed lister, string indexed itemName, uint indexed itemId, uint endTime);
+
+    event newHighestBid(uint indexed itemId, address indexed bidder, uint newHighestBid );
+
     function addListing(string memory _itemName, uint _auctionDuration) public {
         AuctionItem storage item = auctionItems[itemCount];
         item.highestBid = 0;
@@ -22,6 +26,8 @@ contract AuctionContract {
         item.itemName = _itemName;
         item.auctionEnd = block.timestamp + _auctionDuration;
 
+        emit newItemListed(msg.sender, _itemName, itemCount, item.auctionEnd);
+        
         itemCount += 1;
     }
 
@@ -35,6 +41,8 @@ contract AuctionContract {
       item.bids[msg.sender] += msg.value;
       item.highestBid = item.bids[msg.sender];
       item.highestBidderAddress = msg.sender;
+
+      emit newHighestBid(_itemId, msg.sender, item.highestBid);
     }
 
     function withdraw(uint _itemId) public {
@@ -57,5 +65,10 @@ contract AuctionContract {
     function getAuctionItem(uint _itemId) private view returns (AuctionItem storage) {
       require(_itemId >= 0 && _itemId < itemCount, "Invalid item Id");
       return auctionItems[_itemId];
+    }
+
+    function getTotalBid(uint _itemId, address bidder) public view returns (uint) {
+      AuctionItem storage item = getAuctionItem(_itemId);
+      return item.bids[bidder];
     }
 }
