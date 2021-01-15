@@ -57,8 +57,9 @@ contract AuctionContract {
 
       } else {
         require(item.highestBidderAddress != msg.sender, "Can't withdraw while highest bidder");
+        uint withdrawAmount = item.bids[msg.sender];
         item.bids[msg.sender] = 0;
-        msg.sender.transfer(item.bids[msg.sender]);
+        msg.sender.transfer(withdrawAmount);
       }
     }
 
