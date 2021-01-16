@@ -5,9 +5,22 @@ const weiToEth = num => num / 10**18;
 
 const DEFAULT_GAS_PRICE = 100000000000;
 
-contract("AuctionContract", async accounts => {
+const wait = async (seconds) => {
+  return new Promise((resolve, reject) => {
+    let counter = 0;
+    const interval = setInterval(() => {
+      process.stdout.write(".");
+      counter++;
+      if(counter >= seconds){
+        clearInterval(interval);
+        process.stdout.write("\n");
+        resolve();
+      }
+    }, 1000)
+  })
+}
 
-  
+contract("AuctionContract", async accounts => {
   it("should initialise the contract", async () => {
     const auctionInstance = await AuctionContract.deployed();
     
@@ -19,7 +32,7 @@ contract("AuctionContract", async accounts => {
   it("should add a listing and check all the values", async () => {
     const auctionInstance = await AuctionContract.deployed();
     
-    const receipt = await auctionInstance.addListing("A Potato", 120);
+    const receipt = await auctionInstance.addListing("A Potato", 9);
     
     assert.equal(receipt.logs[0].event, "newItemListed", "The 'newItemListed' event should be emitted");
     
@@ -60,7 +73,7 @@ contract("AuctionContract", async accounts => {
     
   });
   
-  it("Should not allow a bid if not the highest bidder", async () => {
+  it("Should not allow a bid if bidding less than current highest bid", async () => {
     const auctionInstance = await AuctionContract.deployed();
     const bidder = accounts[2];
     
@@ -147,7 +160,7 @@ contract("AuctionContract", async accounts => {
   it("Should allow withdrawal of funds if you're not the highest bidder", async () => {
     const auctionInstance = await AuctionContract.deployed();
     const withdrawer = accounts[2];
-    const withdrawerBal = Number(await web3.eth.getBalance(withdrawer));
+    const withdrawerBal = await web3.eth.getBalance(withdrawer);
     
     const balanceAvailable = await auctionInstance.getTotalBid(0, withdrawer);
     
@@ -155,9 +168,10 @@ contract("AuctionContract", async accounts => {
     
     const receipt = await auctionInstance.withdraw(0, {from: withdrawer, gasPrice: DEFAULT_GAS_PRICE });
     const txCost = receipt.receipt.cumulativeGasUsed * DEFAULT_GAS_PRICE;
-    const expectedNewBalance = withdrawerBal + ethToWei(2) - txCost;
+    const expectedNewBalance = Number(BigInt(withdrawerBal) + BigInt(ethToWei(2)) - BigInt(txCost));
+    // console.log({expectedNewBalance, withdrawerBal, txCost})
 
-    const newWithdrawerBal = Number(await web3.eth.getBalance(withdrawer));
+    const newWithdrawerBal = await web3.eth.getBalance(withdrawer);
 
     assert.equal(newWithdrawerBal, expectedNewBalance, "Balance of withdrawer should be 2 eth greater");
 
@@ -171,7 +185,7 @@ contract("AuctionContract", async accounts => {
     const withdrawer = accounts[1];
     
     const balanceAvailable = await auctionInstance.getTotalBid(0, withdrawer);
-    assert.equal(balanceAvailable, ethToWei(3), "There should be a 3eth available for withdrawal");
+    assert.equal(balanceAvailable, ethToWei(3), "There should be a 3 eth available for withdrawal");
 
     try{
       await auctionInstance.withdraw(0,{from: withdrawer});
@@ -179,6 +193,73 @@ contract("AuctionContract", async accounts => {
     } catch(error) {
       assert(error.message.indexOf("revert") >= 0, "The error message should contain revert");
       assert.equal(error.reason, "Can't withdraw while highest bidder", "Error message should give a reason for withdraw fail.");
+    }
+  });
+
+  it("Should not allow bidding after the auction has ended", async () => {
+    const auctionInstance = await AuctionContract.deployed();
+    const item = await auctionInstance.auctionItems(0);
+    const itemEndTime = item.auctionEnd.toNumber();
+    const currentTime = Math.floor(new Date().getTime() / 1000);
+    const secondsToWait = itemEndTime - currentTime + 1;
+    console.log(`Waiting ${secondsToWait} seconds for auction to end`);
+    await wait(secondsToWait);
+
+    try{
+      await auctionInstance.placeBid(0, {from: accounts[4], value: ethToWei(5)});
+      assert.fail("Placing a bid should fail after auction has ended");
+    } catch (error) {
+      assert(error.message.indexOf("revert") >= 0, "The tx should be reverted");
+      assert.equal(error.reason, "Auction has ended", "Error message should say that the auction has ended.");
+    }
+
+  });
+
+  it("Should allow withdrawal after the auction has finished by the lister", async () => {
+    const auctionInstance = await AuctionContract.deployed();
+    const lister = accounts[0];
+    
+    const existingBal = await web3.eth.getBalance(lister);
+    const receipt = await auctionInstance.withdraw(0, {from: lister, gasPrice: DEFAULT_GAS_PRICE});
+    const txCost = receipt.receipt.cumulativeGasUsed * DEFAULT_GAS_PRICE;
+    const expectedNewBal = Number(BigInt(existingBal) + BigInt(ethToWei(3)) - BigInt(txCost));
+    const actualBal = await web3.eth.getBalance(lister);
+    
+    assert.equal(actualBal, expectedNewBal, "The new balance should have increased by 3 eth");
+    
+    const item = await auctionInstance.auctionItems(0);
+    assert.equal(item.claimed, true, "The item should have the funds marked as claimed");
+  });
+  
+  it("Should not allow withdrawal on an item that's already claimed", async () => {
+    const auctionInstance = await AuctionContract.deployed();
+    const lister = accounts[0];
+    try{
+      const receipt = await auctionInstance.withdraw(0, {from: lister, gasPrice: DEFAULT_GAS_PRICE});
+      assert.fail("Should not allow withdrawal of funds if the funds have been claimed");
+    } catch(error) {
+      assert(error.message.indexOf("revert") >= 0, "The tx should be reverted");
+      assert.equal(error.reason, "Auction funds already claimed", "The error message should read that the funds have already been claimed.");
+    }
+  });
+  
+  it("Should not allow any actions on an invalid item", async () => {
+    const auctionInstance = await AuctionContract.deployed();
+
+    try{
+      await auctionInstance.placeBid(4, {from: accounts[3], value: ethToWei(3)});
+      assert.fail("Should not allow placing a bid on an invalid item");
+    } catch(error) {
+      assert(error.message.includes("revert"), "Tx should be reverted");
+      assert.equal(error.reason, "Invalid item Id");
+    }
+
+    try{
+      await auctionInstance.withdraw(4);
+      assert.fail("Should not allow withdrawing on an invalid item");
+    } catch(error) {
+      assert(error.message.includes("revert"), "Tx should be reverted");
+      assert.equal(error.reason, "Invalid item Id");
     }
   })
 });
